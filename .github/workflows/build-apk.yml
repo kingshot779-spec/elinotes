@@ -1,0 +1,75 @@
+name: Build debug APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK 36
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+          yes | sdkmanager --licenses || true
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Extract project
+        run: |
+          ARCHIVE="$(find . -maxdepth 1 -type f -iname 'ELIOS_NOTES_v44*.zip' -print -quit)"
+          test -n "$ARCHIVE"
+          mkdir -p "$RUNNER_TEMP/elios"
+          unzip -q "$ARCHIVE" -d "$RUNNER_TEMP/elios"
+          PROJECT="$RUNNER_TEMP/elios/ELIOS_NOTES"
+          test -f "$PROJECT/settings.gradle.kts"
+          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
+
+      - name: Run tests
+        run: gradle -p "$PROJECT" --no-daemon :app:testDebugUnitTest --stacktrace
+
+      - name: Build APK
+        run: gradle -p "$PROJECT" --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Verify APK
+        run: |
+          test -s "$PROJECT/app/build/outputs/apk/debug/app-debug.apk"
+          ls -lh "$PROJECT/app/build/outputs/apk/debug/app-debug.apk"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ELIOS_NOTES-debug-apk
+          path: ${{ env.PROJECT }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload reports if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ELIOS_NOTES-build-reports
+          path: |
+            ${{ env.PROJECT }}/app/build/reports/
+            ${{ env.PROJECT }}/app/build/outputs/logs/
+          if-no-files-found: ignore
